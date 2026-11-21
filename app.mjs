@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { classify } from "./mock-ai.mjs";
+import { classify as defaultClassify } from "./mock-ai.mjs";
 
 const html = await readFile(new URL("./index.html", import.meta.url));
 
@@ -29,7 +29,7 @@ function parseTriageBody(raw) {
 
 // Вызывает модель не дольше MODEL_TIMEOUT_MS. Signal отменяет запрос у модели,
 // а Promise.race гарантирует лимит, даже если модель signal игнорирует.
-async function callModel(text) {
+async function callModel(classify, text) {
   const controller = new AbortController();
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -63,7 +63,7 @@ function parseModelOutput(raw) {
   return { topic, draft };
 }
 
-async function handleTriage(request, response) {
+async function handleTriage(classify, request, response) {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   const text = parseTriageBody(Buffer.concat(chunks).toString("utf8"));
@@ -71,7 +71,7 @@ async function handleTriage(request, response) {
 
   let raw;
   try {
-    raw = await callModel(text);
+    raw = await callModel(classify, text);
   } catch (error) {
     // Текст заявки в лог не пишем — только причину сбоя.
     console.error(`[triage] manual_review: model call failed (${error?.name}: ${error?.message})`);
@@ -87,7 +87,8 @@ async function handleTriage(request, response) {
 }
 
 // Возвращает http-сервер без listen: запуск — в server.mjs, тесты поднимают свой.
-export function createApp() {
+// classify можно подменить в тестах; по умолчанию — имитатор из mock-ai.mjs.
+export function createApp({ classify = defaultClassify } = {}) {
   return createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/") {
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -98,8 +99,9 @@ export function createApp() {
       return json(response, 404, { status: "not_found" });
     }
     try {
-      await handleTriage(request, response);
-    } catch {
+      await handleTriage(classify, request, response);
+    } catch (error) {
+      console.error(`[triage] server_error: unexpected failure (${error?.name}: ${error?.message})`);
       json(response, 500, { status: "server_error" });
     }
   });
