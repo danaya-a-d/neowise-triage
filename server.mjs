@@ -9,10 +9,25 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+// Возвращает text из тела запроса или null, если тело не прошло проверку.
+function parseTriageBody(raw) {
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return null;
+  const { text } = body;
+  if (typeof text !== "string" || text.trim() === "") return null;
+  return text;
+}
+
 async function handleTriage(request, response) {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
-  const { text } = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  const text = parseTriageBody(Buffer.concat(chunks).toString("utf8"));
+  if (text === null) return json(response, 400, { status: "invalid_input" });
   const result = JSON.parse(await classify(text));
   return json(response, 200, { status: "ready", ...result });
 }
